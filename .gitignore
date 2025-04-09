@@ -140,3 +140,4 @@ ssr/diffusion_depth_prior/*
 ssr/depth_anything/*
 ssr/depth_anything_pix3d/*
 pretrain_models/
+SSP3D/proto_features/*
