@@ -197,11 +197,20 @@ class MonoSDFLoss(nn.Module):
         self.use_curriculum_depth = cfg['loss']['use_curriculum_depth']
         self.use_curriculum_normal = cfg['loss']['use_curriculum_normal']
         if self.use_curriculum_color:
-            self.curri_color = cfg['loss']['curri_color']
+            if cfg['Stage'] == 2:
+                self.curri_color = cfg['Stage2']['curri_color']
+            else:
+                self.curri_color = cfg['loss']['curri_color']
         if self.use_curriculum_depth:
-            self.curri_depth = cfg['loss']['curri_depth']
+            if cfg['Stage'] == 2:
+                self.curri_depth = cfg['Stage2']['curri_depth']
+            else:
+                self.curri_depth = cfg['loss']['curri_depth']
         if self.use_curriculum_normal:
-            self.curri_normal = cfg['loss']['curri_normal']
+            if cfg['Stage'] == 2:
+                self.curri_normal = cfg['Stage2']['curri_normal']
+            else:
+                self.curri_normal = cfg['loss']['curri_normal']
         
         if cfg['loss']['rgb_loss'] == 'L1loss':
             self.rgb_loss = nn.L1Loss(reduction='none')
@@ -248,11 +257,13 @@ class MonoSDFLoss(nn.Module):
         smooth_loss =  torch.norm(normals_1 - normals_2, dim=-1).mean()
         return smooth_loss
     
-    def get_depth_loss(self, depth_pred, depth_gt, vis_mask):
+    def get_depth_loss(self, depth_pred, depth_gt, vis_mask, label):
         # TODO remove hard-coded scaling for depth
         if self.dataset == 'Pix3D':
-
-            return self.depth_loss(depth_pred, (depth_gt * 50 + 0.5), vis_mask)
+            if label:
+                return self.depth_loss(depth_pred, (depth_gt * 50 + 0.5), vis_mask)
+            else:
+                return self.depth_loss(depth_pred, depth_gt, vis_mask)
         
         depth_loss = self.depth_loss(depth_pred, depth_gt)
         depth_loss = (depth_loss * vis_mask.float()).sum()
@@ -361,7 +372,7 @@ class MonoSDFLoss(nn.Module):
                 depth_gt = depth_gt.reshape(-1, self.num_pixels, 1) 
             depth_pred = model_outputs['depth_values']
             depth_pred = depth_pred.reshape(-1, self.num_pixels, 1)                 # [B, Num_pixels, 1]
-            depth_loss = self.get_depth_loss(depth_pred, depth_gt, vis_mask)
+            depth_loss = self.get_depth_loss(depth_pred, depth_gt, vis_mask,label)
             output['depth_loss'] = depth_loss
             if self.use_curriculum_depth:
                 self.depth_weight = self.get_loss_weight(epoch, begin_epoch=self.curri_depth[0], end_epoch=self.curri_depth[1], begin_weight=self.curri_depth[2], end_weight=self.curri_depth[3])

@@ -1,50 +1,53 @@
-resume: True
+Stage: 1
+resume: False
 finetune: False
-dict_resume: False
 method: ssr                            # use the trainer
-exp_name: pix3d
+exp_name: pix3d_semi
 save_root_path: ./output            # save path = os.path.join(save_root_path, exp_name)
-weight: output/pix3d/model_latest.pth
+weight: model_latest.pth
 show_rendering: False                   # NOTE: True for novel view synthesis
 fix_random_seed: True                   # fix random seed
-Stage: 1
-pseudo_label: 
-  threshold: 0.4
-  ema_alpha: 0.9998
-  discriminator_lr: 0.0008
-  lambda_adv: 0.00
-  step_length: 0.00005
-  ema_accu_num: 1
-  get_protofile: False
-  train_protofile: True
+
+Stage2:
+  ema_alpha: 0.996
+  ema_fast: 0.9
+  w_fixed: 0.5
+  teacher_weight: output/pix3d_semi/model_latest.pth
+  eta: 0.06
+  curri_color: [70, 150, 0, 0.1]     # [start_step, end_step, start_weight, end_weight]
+  curri_depth: [70, 150, 0, 2.0]     # [start_step, end_step, start_weight, end_weight]
+  curri_normal: [70, 150, 0, 0.01]
 
 eval:
   extract_mesh: True
   split_n_pixels: 648                  # 648 * 2, split pixels (total pixels too large)
-  export_color_mesh: True               # whether mesh with appearance
+  export_color_mesh: False               # whether mesh with appearance
+  export_mesh: True
   
 device:
   use_gpu: True
-  gpu_ids: '1'                          # multi-gpu train, e.g. '3,6' will use 3st and 6st gpus
+  gpu_ids: '0'                          # multi-gpu train, e.g. '3,6' will use 3st and 6st gpus
 
 data:
   dataset: Pix3D
   img_res: None                   # dataset image resolution [H, W], pix3d raw image resolution is different
   resize_img: True
-  resize_res: [384, 384]           # [H, W]
+  resize_res: [384, 384]          # [H, W]
   data_path: data/Pix3D
   split_dir: ./dataset
   sdf_path: data/Pix3D/gt-sdf
-  train_class_name: ['all']
-  test_class_name: 'test'
+  train_class_name: ['10%']
+  pseudo_class_name: ['90%']
+  test_class_name: 'all'
   load_dynamic: True                    # True:load the data dynamically, False:store them in the memory firstly
   trial: False                          # only use 200 split
-  accumulation_steps: 4            # 梯度累计iter 数
+  accumulation_steps: 16
   batch_size:
-    train: 4
-    val: 2
+    train: 1
+    val: 4
     test: 1
-  num_workers: 20
+    pseudo: 4
+  num_workers: 16
   num_pixels:
     train: 64                      # pixels number for an image
     val: 64
@@ -59,7 +62,7 @@ data:
 
 optimizer:
   type: Adam
-  lr: 0.00006
+  lr: 0.001
   beta1: 0.9
   beta2: 0.999
   eps: 0.00000001                       # 1e-8
@@ -67,16 +70,16 @@ optimizer:
 
 scheduler:
   type: MultiStepLR
-  milestone: [500,600]                    # milestone value change lr milestone: [330,370]   
+  milestone: [330,370]                    # milestone value change lr
   gamma: 0.2
 
 loss:
   use_curriculum_color: True           # use curriculum learning color
   use_curriculum_depth: True
   use_curriculum_normal: True
-  curri_color: [60, 160, 0.0, 0.1]     # [start_step, end_step, start_weight, end_weight]
-  curri_depth: [60, 160, 0.0, 2.0]     # [start_step, end_step, start_weight, end_weight]
-  curri_normal: [60, 160, 0.0, 0.01]
+  curri_color: [150, 300, 0.0, 0.1]     # [start_step, end_step, start_weight, end_weight]
+  curri_depth: [150, 300, 0.0, 2.0]     # [start_step, end_step, start_weight, end_weight]
+  curri_normal: [150, 300, 0.0, 0.01]
   vis_mask_loss: True                   # only calculate color,depth,normal loss on visible mask
   rgb_loss: L1loss
   color_weight: 0.0
@@ -90,7 +93,6 @@ loss:
   sdf_weight: 1
   end_step: -1                           # not use decay
   vis_sdf: False                         # vis sdf use pyrender
-  use_PaCoLoss: False
 
 model:
   ray_noise: False
@@ -109,16 +111,11 @@ model:
     use_global_encoder: True           # whether object bdb2d global feature
     use_cls_encoder: True
     latent_feature_dim: 256             # same to hidden dims 256
-
     encoder:                            # image encoder net
       encoder_type: spatial             # spatial or global
       backbone: resnet34
       pretrained: True
       num_layers: 3                     # latent_size=[0, 64, 128, 256, 512, 1024][num_layers], num_layers=3  ->  latent_size=256(image feature dims)
-      use_depthStream: True
-      use_dino: False                    # whether use dino strategy
-      use_diffu_prior: False             # whether use diffusion prior
-      use_diffu_weight_epoch: 100
 
   implicit_network:
     d_in: 3                             # monosdf is 3 (x,y,z)
@@ -163,7 +160,7 @@ model:
     take_sphere_intersection: False     # if True, define a sampler sphere, model.scene_bounding_sphere will work; 
                                         # if False, define near and far directly, model.ray_sampler.near and model.ray_sampler.far will work
 other:
-  nepoch: 600                           # max epoch
+  nepoch: 200                           # max epoch
   model_save_interval: 1               # (epoch)
   visualize_interval: 1000              # img tenserboard vis    (iter)
   dump_result: True                     # save result

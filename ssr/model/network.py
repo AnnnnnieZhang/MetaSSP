@@ -5,8 +5,6 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 import trimesh
-from transformers import AutoModel, AutoConfig
-
 
 from .resnet import resnet18_small_stride
 from .encoder import make_encoder
@@ -16,42 +14,8 @@ from .ray_sampler import ErrorBoundSampler, UniformSampler
 from utils import rend_util, sdf_util
 from ssr.ssr_utils.utils import repeat_interleave
 from ssr.model.Attention_module import Attention_RoI_Module
-from SSP3D.proto_attention import MultiHeadPrototypeAttention
-class GlobalEncoder(nn.Module):
-    def __init__(self):
-        super(GlobalEncoder, self).__init__()
-        # 获取MambaVision模型的第三和第四阶段
-        model = AutoModel.from_pretrained("nvidia/MambaVision-B-1K", trust_remote_code=True)
-        self.mamba_stage3 = model.model.levels[2]  # 第三阶段
-        self.mamba_stage4 = model.model.levels[3]  # 第四阶段
-        
-        # 定义downsample，将输入从256维升到512维
-        self.downsample = nn.Conv2d(256, 512, kernel_size=3, stride=2, padding=1, bias=False)
 
-        # 定义全连接层，将1024维特征缩减到256维
-        self.fc = nn.Sequential(
-            nn.Linear(1024, 512),
-            nn.ReLU(),
-            nn.Linear(512, 256),
-            nn.ReLU()
-        )
 
-    def forward(self, x):
-        # 在进入第三阶段之前升维
-        x = self.downsample(x)  # [batch_size, 512, reduced_height, reduced_width]
-
-        # 进入第三阶段和第四阶段特征提取
-        x = self.mamba_stage3(x)[0]  # 进入第三阶段特征提取
-        x = self.mamba_stage4(x)[0]  # 进入第四阶段特征提取
-        
-        # 对第4阶段特征做池化处理
-        pooled_features = nn.AdaptiveAvgPool2d((1, 1))(x)  # [batch_size, 1024, 1, 1]
-        flattened = torch.flatten(pooled_features, 1)  # 展平成 [batch_size, 1024]
-        
-        # 全连接层将特征从1024维缩减到256维
-        output = self.fc(flattened)  # [batch_size, 256]
-        return output
-    
 class SSRNet(torch.nn.Module):                                                 # modify from MonoSDFNetwork
     def __init__(self, conf):
         """
@@ -65,8 +29,7 @@ class SSRNet(torch.nn.Module):                                                 #
         self.white_bkgd = conf['model']['white_bkgd']
         self.depth_norm = conf['model']['depth_norm']
         self.ray_noise = conf['model']['ray_noise']
-        self.train_protofile = conf['pseudo_label']['train_protofile']
-        self.use_PaCoLoss = False
+
         if 'fusion_scene' in conf['eval']:
             self.fusion_scene = conf['eval']['fusion_scene']
         else:
@@ -87,8 +50,6 @@ class SSRNet(torch.nn.Module):                                                 #
 
         if self.use_global_encoder:
             # object bdb2d global image feature
-            # self.global_encoder = GlobalEncoder().cuda()
-
             self.global_encoder = nn.Sequential(
                 nn.Conv2d(in_channels=256,out_channels=64,kernel_size=3,padding=1),
                 resnet18_small_stride(pretrained=False,input_channels=64),
@@ -100,8 +61,6 @@ class SSRNet(torch.nn.Module):                                                 #
             )
         
         self.use_cls_encoder = conf['model']['latent_feature']['use_cls_encoder']
-        
-        self.use_diffu_prior = self.config['model']['latent_feature']['encoder']['use_diffu_prior']  # 判断是否使用Diffusion Prior
 
         self.latent_size = conf['model']['latent_feature']['latent_feature_dim']
         if d_latent != self.latent_size:
@@ -125,15 +84,7 @@ class SSRNet(torch.nn.Module):                                                 #
             weight_norm=conf_implicit['weight_norm'],       multires=conf_implicit['multires'],
             sphere_scale=conf_implicit['sphere_scale'],     inside_outside=conf_implicit['inside_outside']
         )
-        # self.implicit_network = ImplicitNetwork(
-        #     config=conf,
-        #     feature_vector_size=self.feature_vector_size,
-        #     sdf_bounding_sphere=0.0 if self.white_bkgd else self.scene_bounding_sphere,
-        #     token_dim=512,  # 注意力 token 维度
-        #     num_heads=2,    # 注意力头数
-        #     multires=conf_implicit['multires'],
-        #     sphere_scale=conf_implicit['sphere_scale']  # 保留球体范围参数
-        # )
+
         conf_rendering = conf['model']['rendering_network']
         self.rendering_network = RenderingNetwork(
             feature_vector_size=self.feature_vector_size,   mode=conf_rendering['mode'],
@@ -185,17 +136,6 @@ class SSRNet(torch.nn.Module):                                                 #
                 nn.Sigmoid()
             )
 
-        if self.train_protofile:
-        # self.proto_attn = MultiHeadPrototypeAttention(img_feat_dim=256, proto_dim=256, num_prototypes=9, point_dim=6272, num_heads=4).cuda()
-            self.proto_attn = MultiHeadPrototypeAttention(
-                img_feat_dim=256,       # 图像特征维度
-                proto_dim=256,          # 原型特征维度
-                num_heads=8,            # 注意力头数量
-                prototype_path="SSP3D/proto_features/proto_center.pkl"  # 预训练的原型路径
-                )
-        if self.use_PaCoLoss:
-            self.PaCoBlock = PaCoLoss(temperature=1.0, base_temperature=1.0, num_classes=9)
-
     def get_feature(self, input, uv, z_vals_pnts):
         image = input["image"]                              # [B, 3, H, W]
         self.image_shape = torch.empty(2).cuda()
@@ -207,7 +147,7 @@ class SSRNet(torch.nn.Module):                                                 #
         if self.use_global_encoder:
             bdb_grid = input["bdb_grid"].cuda().to(torch.float32)                                               # [B, 64, 64, 2]
             bdb_roi_feature = F.grid_sample(self.encoder.latent, bdb_grid, align_corners=True, mode='bilinear')     # [B, latent_size, 64, 64]
-            global_latent= self.global_encoder(bdb_roi_feature)                        # [B, 256]
+            global_latent = self.global_encoder(bdb_roi_feature)                        # [B, 256]
 
             cat_feature = global_latent
 
@@ -219,9 +159,6 @@ class SSRNet(torch.nn.Module):                                                 #
             else:
                 cat_feature = torch.cat([cat_feature, cls_encoder], dim=1)          # [B, +9]
 
-            if self.train_protofile:
-                sdf_latent, attn_weights = self.proto_attn(cat_feature)
-
 
         roi_feat = None
         if self.use_atten:
@@ -230,8 +167,6 @@ class SSRNet(torch.nn.Module):                                                 #
             roi_feat=ret_dict["roi_feat"]
 
         if self.use_encoder:
-            if self.use_diffu_prior:
-                diffu_prior = input['depth_stream']  # diffu_prior.shape = torch.Size([12, 484, 648])
             latent = self.encoder.index(
                 uv, None, self.image_shape, roi_feat=roi_feat
             )  # (B, latent_size, N_ray)
@@ -242,10 +177,10 @@ class SSRNet(torch.nn.Module):                                                 #
             )  # (B * N_ray, latent_size)
             latent_feature = latent                              ###### now, default use_encoder is True
 
-        return latent_feature, cat_feature, sdf_latent
+        return latent_feature, cat_feature
 
 
-    def forward(self, input, indices, new_pose=None, mesh=None, mesh_coords='canonical'):
+    def forward(self, input, indices, f_dist=False, new_pose=None, mesh=None, mesh_coords='canonical'):
 
         intrinsics = input["intrinsics"]
         image = input["image"]                              # [B, 3, H, W]
@@ -280,8 +215,7 @@ class SSRNet(torch.nn.Module):                                                 #
                 pnts_camera_list.append(pnts_camera.permute(0, 2, 1).reshape(-1, 3).detach().cpu().numpy())
                 pnts_world_list.append(world_coords.reshape(-1, 3).detach().cpu().numpy())
 
-                latent_feature, cat_feature, sdf_latent = rend_util.get_latent_feature(self, world_coords.reshape(-1, 3), intrinsics, extrinsics, input)
-
+                latent_feature, cat_feature = rend_util.get_latent_feature(self, world_coords.reshape(-1, 3), intrinsics, extrinsics, input)
 
                 # get obj dirs
                 cam_loc_incam = torch.tensor([0, 0, 0]).cuda().float()
@@ -291,7 +225,7 @@ class SSRNet(torch.nn.Module):                                                 #
                 ray_dirs_obj = scene_obj.reshape(-1, 3) - cam_loc_obj           # [N, 3]
                 ray_dirs_obj = F.normalize(ray_dirs_obj, dim=1)                 # [N, 3]
 
-                sdf, feature_vectors, gradients = self.implicit_network.get_outputs(pnts.reshape(-1, 3), latent_feature, cat_feature, sdf_latent)
+                sdf, feature_vectors, gradients = self.implicit_network.get_outputs(pnts.reshape(-1, 3), latent_feature, cat_feature)
                 
                 # color use scene obj
                 rgb_flat = self.rendering_network(scene_obj.reshape(-1, 3), gradients, ray_dirs_obj, feature_vectors, indices=None)
@@ -332,14 +266,14 @@ class SSRNet(torch.nn.Module):                                                 #
         cat_feature = None
         
         # encoder the image
-        self.encoder(image)           # [B, latent_size, H', W']
+        self.encoder(image,f_dist)           # [B, latent_size, H', W']
 
         if self.use_global_encoder:
             bdb_grid = input["bdb_grid"].cuda().to(torch.float32)                                               # [B, 64, 64]
             bdb_roi_feature = F.grid_sample(self.encoder.latent, bdb_grid, align_corners=True, mode='bilinear')     # [B, latent_size, 64, 64]
             global_latent = self.global_encoder(bdb_roi_feature)                        # [B, 256]
-            cat_feature = global_latent
 
+            cat_feature = global_latent
 
         if self.use_cls_encoder:
             cls_encoder = input['cls_encoder'].cuda().to(torch.float32)             # [B, 9]
@@ -348,15 +282,6 @@ class SSRNet(torch.nn.Module):                                                 #
                 cat_feature = cls_encoder
             else:
                 cat_feature = torch.cat([cat_feature, cls_encoder], dim=1)          # [B, +9]
-
-            if self.train_protofile:
-                sdf_latent, attn_weights = self.proto_attn(cat_feature)
-
-                if self.use_PaCoLoss:
-                    # 生成 labels 和 sup_logits
-                    labels = torch.argmax(cls_encoder, dim=1)  # 从 one-hot 编码生成类别标签 [B]
-                    sup_logits = cls_encoder  # 使用 one-hot 编码作为 sup_logits [B, 9]
-                    paco_loss = self.PaCoBlock(sdf_latent, labels=labels, sup_logits=sup_logits)
 
         roi_feat = None
         if self.use_atten:
@@ -372,8 +297,6 @@ class SSRNet(torch.nn.Module):                                                 #
                 pred_mask = self.mask_decoder(bdb_roi_feature)                                                  # [B, 1, 64, 64]
 
         if self.use_encoder:
-            if self.use_diffu_prior:
-                diffu_prior = input['depth_stream']  # diffu_prior.shape = torch.Size([12, 484, 648])
             latent = self.encoder.index(
                 uv, None, self.image_shape, roi_feat=roi_feat
             )  # (B, latent_size, N_ray)
@@ -405,7 +328,7 @@ class SSRNet(torch.nn.Module):                                                 #
         ray_dirs_world = ray_dirs_world.reshape(-1, 3)
 
         if self.sampling_method == 'errorbounded':          # in canonical coords
-            z_vals, z_samples_eik = self.ray_sampler.get_z_vals(ray_dirs_obj, cam_loc_obj, self, latent_feature, cat_feature, global_latent, sdf_latent, uv, self.image_shape, input)        # z_vals: (B*N_uv, N_pts_per_ray)
+            z_vals, z_samples_eik = self.ray_sampler.get_z_vals(ray_dirs_obj, cam_loc_obj, self, latent_feature, cat_feature, global_latent, uv, self.image_shape, input)        # z_vals: (B*N_uv, N_pts_per_ray)
         elif self.sampling_method == 'uniform':
             z_vals, _, _ = self.ray_sampler.get_z_vals(ray_dirs, cam_loc, self)
         else:
@@ -429,7 +352,7 @@ class SSRNet(torch.nn.Module):                                                 #
             points_world = rend_util.camera_to_world(points_temp, new_pose)                 # new camera pose, get world coords
 
             # get points feature in original camera pose
-            latent_feature, cat_feature, sdf_latent = rend_util.get_latent_feature(self, points_world, intrinsics, extrinsics, input)     # (B*N_uv*N_pts_per_ray, 256)
+            latent_feature, cat_feature = rend_util.get_latent_feature(self, points_world, intrinsics, extrinsics, input)     # (B*N_uv*N_pts_per_ray, 256)
         else:
             points_world = cam_loc_world.unsqueeze(1) + z_vals.unsqueeze(2) * ray_dirs_world.unsqueeze(1)           # camera coordinate, [B*N_uv, N_pts_per_ray, 3]
             points_world = points_world.reshape(batch_size, num_pixels, -1, 3)                                      # [B, N_uv, N_pts_per_ray, 3] world coords
@@ -444,9 +367,7 @@ class SSRNet(torch.nn.Module):                                                 #
         ###### points_obj is the obj coordinate, gradients in obj coords too
         # transfer to cube coords
         cube_coords = sdf_util.scene_obj2cube_coords(points_obj, input['scene_scale'], input['centroid'], input['none_equal_scale'])    # (B*N_uv*N_pts_per_ray, 3)
-        sdf, feature_vectors, gradients = self.implicit_network.get_outputs(cube_coords, latent_feature, cat_feature, sdf_latent)
-
-        cls_indices = cat_feature[:, -9:]  # [batch_size, 9]
+        sdf, feature_vectors, gradients = self.implicit_network.get_outputs(cube_coords, latent_feature, cat_feature)
 
         ###### indices just is __getitem__ index
         # use canonical coords also
@@ -493,14 +414,8 @@ class SSRNet(torch.nn.Module):                                                 #
             'sample_points': points_world,       # world coords, (B, N_uv, N_pts_per_ray, 3)
             'weights': weights,
             'ray_mask': ray_mask,
-            'cls': cls_indices,
-            # 'PaCoLoss': paco_loss
         }
-  
-        if self.use_diffu_prior:
-            output['diffu_weight'] = self.encoder.diffu_weight
-        
-            
+
         if self.use_instance_mask:
             output['pred_mask'] = pred_mask
 
@@ -521,7 +436,7 @@ class SSRNet(torch.nn.Module):                                                 #
 
             # transfer to cube coords
             eikonal_points_cube = sdf_util.scene_obj2cube_coords(eikonal_points_obj.reshape(-1, 3), input['scene_scale'], input['centroid'], input['none_equal_scale'])
-            grad_theta = self.implicit_network.gradient(eikonal_points_cube, eik_latent_feature, cat_feature, sdf_latent)     # (B*2*N_uv, 3)
+            grad_theta = self.implicit_network.gradient(eikonal_points_cube, eik_latent_feature, cat_feature)     # (B*2*N_uv, 3)
             
             # split gradient to eikonal points and neighbour points
             output['grad_theta'] = grad_theta[:grad_theta.shape[0]//2]
@@ -553,20 +468,17 @@ class SSRNet(torch.nn.Module):                                                 #
 
         if self.add_bdb3d_points:
             add_points_world = input["add_points_world"].cuda().to(torch.float32)        # [B, N_uv, N_add, 3]
-            add_latent_feature, add_cat_feature, add_sdf_latent = rend_util.get_latent_feature(self, add_points_world, intrinsics, extrinsics, input)
+            add_latent_feature, add_cat_feature = rend_util.get_latent_feature(self, add_points_world, intrinsics, extrinsics, input)
 
             # get obj coords
             add_points_obj = sdf_util.world2obj(add_points_world, world_to_obj)                                                 # [B, N_uv, N_add, 3]
-            # add_sdf_latent = torch.zeros((add_points_obj.shape[0], 64), device=add_points_world.device)  # 512 为 sdf_latent 的维度
-
 
             # transfer to cube coords
             add_points_cube = sdf_util.scene_obj2cube_coords(add_points_obj.reshape(-1, 3), input['scene_scale'], input['centroid'], input['none_equal_scale'])
-            add_sdf = self.implicit_network(add_points_cube, add_latent_feature, add_cat_feature, add_sdf_latent)[:, 0]       # (B * N * N_add_points, 1)
+            add_sdf = self.implicit_network(add_points_cube, add_latent_feature, add_cat_feature)[:, 0]       # (B * N * N_add_points, 1)
 
             output['add_points_world'] = add_points_world
             output['add_sdf'] = add_sdf.reshape(-1, 1)
-            # output['depth_weight'] = self.encoder.diffu_weight
 
         return output
 

@@ -112,7 +112,7 @@ class ErrorBoundSampler(RaySampler):
         if inverse_sphere_bg:
             self.inverse_sphere_sampler = UniformSampler(1.0, 0.0, N_samples_inverse_sphere, False, far=1.0)
 
-    def get_z_vals(self, ray_dirs_obj, cam_loc_obj, model, latent_feature, cat_feature, global_latent, sdf_latent, uv, image_shape, model_input):
+    def get_z_vals(self, ray_dirs_obj, cam_loc_obj, model, latent_feature, cat_feature, global_latent, uv, image_shape, model_input):
         """
         use more feature and deformable attention, and suitable for 'add' and 'cat' architecture mode
         :param latent_feature, in 'add':latent_feature = img_feature + global_feature + rot_feature; in 'cat': latent_feature = img_feature     (B*N_uv, 256)
@@ -147,7 +147,7 @@ class ErrorBoundSampler(RaySampler):
             with torch.no_grad():
                 # transfer to cube coords
                 cube_coords = sdf_util.scene_obj2cube_coords(points_obj, model_input['scene_scale'], model_input['centroid'], model_input['none_equal_scale'])    # (B*N_uv*N_pts_per_ray, 3)
-                samples_sdf = model.implicit_network.get_sdf_vals(cube_coords, latent_feature, cat_feature, sdf_latent)
+                samples_sdf = model.implicit_network.get_sdf_vals(cube_coords, latent_feature, cat_feature)
             if samples_idx is not None:
                 sdf_merge = torch.cat([sdf.reshape(-1, z_vals.shape[1] - samples.shape[1]),
                                        samples_sdf.reshape(-1, samples.shape[1])], -1)

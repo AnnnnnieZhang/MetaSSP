@@ -21,10 +21,11 @@ category_label_mapping = {
 
 
 class Pix3d_Recon_Dataset(Dataset):
-    def __init__(self, config, mode):
+    def __init__(self, config, mode, pseudo):
         super(Pix3d_Recon_Dataset, self).__init__()
         self.mode = mode
         self.config = config
+        self.pseudo = pseudo
         self.use_depth = self.config['data']['use_depth']
         self.use_normal = self.config['data']['use_normal']
         self.use_sdf = self.config['data']['use_sdf']
@@ -39,11 +40,13 @@ class Pix3d_Recon_Dataset(Dataset):
         self.mask_filter = self.config['data']['mask_filter']
         self.bdb2d_filter = self.config['data']['bdb2d_filter']
         self.soft_pixels = self.config['data']['soft_pixels']
-        self.use_depthStream = self.config['model']['latent_feature']['encoder']['use_depthStream']
         if mode=="train":
-            classnames = self.config['data']['train_class_name']
+            if pseudo == True:
+                classnames = self.config['data']['pseudo_class_name']
+            else:
+                classnames = self.config['data']['train_class_name']
         elif mode == 'val':
-            classnames = self.config['data']['train_class_name']        # val is in training time
+            classnames = self.config['data']['test_class_name']        # val is in training time
         else:
             classnames = self.config['data']['test_class_name']
         
@@ -78,14 +81,10 @@ class Pix3d_Recon_Dataset(Dataset):
 
         self.use_cls_encoder = self.config['model']['latent_feature']['use_cls_encoder']
 
-                
-        if self.use_depthStream:
-            self.depth_stream_path = 'ssr/depth_anything_pix3d/'
-            self.depth_stream = None
+
 
     def __len__(self):
         return len(self.split)
-
 
     def load_rgb(self, path, resize_img=False, resize_res=None, normalize_rgb = False):
 
@@ -108,27 +107,6 @@ class Pix3d_Recon_Dataset(Dataset):
 
             imgid, objid, cname = self.split[data_idx]
             data_idx = np.random.randint(0,self.__len__())
-
-            if self.use_depthStream:
-                file_name = f"{cname}_{os.path.splitext(os.path.basename(imgid))[0]}_pred.npy"
-                file_path = os.path.join(self.depth_stream_path, file_name)
-                if os.path.exists(file_path):
-                    np_data = np.load(file_path)  # 加载深度图 .npy 文件
-                    torch_data = torch.from_numpy(np_data).float()  # 转为 torch 张量
-
-                    # 调整深度图尺寸到 self.resize_res
-                    if self.resize_res:
-                        torch_data = torch.nn.functional.interpolate(
-                            torch_data.unsqueeze(0).unsqueeze(0),  # 增加 batch 和 channel 维度
-                            size=self.resize_res,  # 使用 self.resize_res 调整尺寸
-                            mode="bilinear",       # 使用双线性插值
-                            align_corners=False    # 防止边界问题
-                        ).squeeze(0).squeeze(0)  # 恢复为 [H, W]
-
-                    self.depth_stream = torch_data  # 最终调整后的深度图
-                else:
-                    print(f"File {file_name} does not exist in the folder.")
-
 
             # load data
             img_path = os.path.join(self.config['data']['data_path'], imgid)
@@ -448,11 +426,11 @@ class Pix3d_Recon_Dataset(Dataset):
                 sample['cls_encoder'] = cls_codes.astype(np.float32)
 
             success_flag=True
-            if self.use_depthStream:
-
-                sample["depth_stream"] = self.depth_stream
-
-        return data_idx, sample, ground_truth
+            
+        if self.pseudo:
+            return data_idx, sample
+        else:
+            return data_idx, sample, ground_truth
     
 
 def worker_init_fn(worker_id):
@@ -461,11 +439,16 @@ def worker_init_fn(worker_id):
     np.random.seed(base_seed + worker_id)
 
 
-def Pix3D_Recon_dataloader(config, mode='train'):
+def Pix3D_Recon_dataloader(config, mode='train', pseudo=False):
+    # 根据 unlabel 的值设置 batch_size
+    if pseudo:
+        batch_size = config['data']['batch_size']['pseudo']
+    else:
+        batch_size = config['data']['batch_size'][mode]
     dataloader = DataLoader(
-                    dataset=Pix3d_Recon_Dataset(config, mode),
+                    dataset=Pix3d_Recon_Dataset(config, mode, pseudo),
                     num_workers=config['data']['num_workers'],
-                    batch_size=config['data']['batch_size'][mode],
+                    batch_size=batch_size,
                     shuffle=(mode == 'train'),
                     worker_init_fn=worker_init_fn, pin_memory=True
                 )

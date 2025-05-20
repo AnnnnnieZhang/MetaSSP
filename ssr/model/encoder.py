@@ -129,7 +129,7 @@ class SpatialEncoder(nn.Module):
 
             return samples[:, :, :, 0]  # (B, C, N)
 
-    def forward(self, x):
+    def forward(self, x,  f_dist=False):
         """
         For extracting ResNet's features.
         :param x image (B, C, H, W)
@@ -183,6 +183,21 @@ class SpatialEncoder(nn.Module):
         self.latent_scaling[0] = self.latent.shape[-1]
         self.latent_scaling[1] = self.latent.shape[-2]
         self.latent_scaling = self.latent_scaling / (self.latent_scaling - 1) * 2.0
+        
+        # 按照 latent 标准差的比例来设定
+        if f_dist:
+            # 先计算当前 batch latent 的标准差
+            with torch.no_grad():
+                std = self.latent.std()
+
+            # 再把 noise_level 设为 std 的一个小比例
+            ratio = 0.05   # 你可以在 0.01 ～ 0.1 之间试试
+            noise_level = std * ratio
+
+            # 添加扰动
+            noise = torch.randn_like(self.latent) * noise_level
+            self.latent = self.latent + noise
+
         return self.latent
 
     @classmethod

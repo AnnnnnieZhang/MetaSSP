@@ -371,14 +371,13 @@ def get_loss(cfg, mode):
     return loss
 
 
-def get_dataloader(cfg,mode,unlabel=False):
-    # if cfg['data']['dataset'] == 'labeled_FRONT3D':
+def get_dataloader(cfg,mode,pseudo=False):
     if cfg['data']['dataset'] == 'FRONT3D':
         from ssr.dataloader.front3d_dataloader import Front3D_Recon_dataloader
-        dataloader=Front3D_Recon_dataloader(cfg,mode,unlabel)
+        dataloader=Front3D_Recon_dataloader(cfg,mode)
     elif cfg['data']['dataset'] == 'Pix3D':
         from ssr.dataloader.pix3d_dataloader import Pix3D_Recon_dataloader
-        dataloader=Pix3D_Recon_dataloader(cfg,mode)
+        dataloader=Pix3D_Recon_dataloader(cfg,mode,pseudo)
     elif cfg['data']['dataset'] == 'SUNRGBD':
         from ssr.dataloader.sunrgbd_dataloader import SUNRGBD_Recon_dataloader
         dataloader=SUNRGBD_Recon_dataloader(cfg,mode)
@@ -389,10 +388,8 @@ def get_dataloader(cfg,mode,unlabel=False):
 
 def get_trainer(config):
     if config["method"]=="ssr":
-        if config["Stage"] == 0:
+        if config["Stage"] == 1:
             from ssr.trainer import Recon_trainer
-        elif config["Stage"] == 1:
-            from ssr.trainer_stage1 import Recon_trainer
         elif config["Stage"] == 2:
             from ssr.trainer_stage2 import Recon_trainer
         trainer=Recon_trainer

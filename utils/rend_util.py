@@ -199,8 +199,8 @@ def camera_coords_transfer(points):
 def get_latent_feature(model, pnts, intrinsics, extrinsics, input):
     
     uv_align, z_vals_pnts = get_uv_world(pnts, intrinsics, extrinsics)
-    latent_feature, cat_feature, sdf_latent = model.get_feature(input, uv_align, z_vals_pnts)
-    return latent_feature, cat_feature, sdf_latent
+    latent_feature, cat_feature = model.get_feature(input, uv_align, z_vals_pnts)
+    return latent_feature, cat_feature
 
 
 def get_uv_world(pnts, intrinsics, extrinsics):

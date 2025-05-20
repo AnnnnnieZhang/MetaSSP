@@ -1,6 +1,7 @@
 import os
 import time
 import datetime
+import csv
 
 import torch
 from torch.utils.tensorboard import SummaryWriter
@@ -18,6 +19,15 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
     cfg.write_config()
     tb_logger = SummaryWriter(log_dir)
 
+    # 定义保存 trend_stage1.csv 的路径
+    trend_file_path = os.path.join(log_dir, 'trend_stage1.csv')
+
+    # 确保文件存在（如果不存在则创建） 写入标题行
+    if not os.path.exists(trend_file_path):
+        with open(trend_file_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["Epoch", "AvgEvalLoss", "AvgSDFLoss", "train_batchsize", "train_lr"])
+
     start_epoch = 0
     iter = 0
     if config["resume"] == True:
@@ -33,6 +43,8 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
 
     min_eval_loss = 10000
     accumulation_steps = config["data"]["accumulation_steps"]  # 累积步数，尝试不同的值
+    batchsize = config["data"]["batch_size"]["train"]*config["data"]["accumulation_steps"]
+    lr = config["optimizer"]["lr"]
     
     for e in range(start_epoch, config['other']['nepoch']):
         torch.cuda.empty_cache()
@@ -68,10 +80,9 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
             model_input['scene_scale'] = model_input['scene_scale'].cuda().to(torch.float32)
 
             model_outputs = model(model_input, indices)
-
+            
             loss_output = loss(model_outputs, ground_truth, e)
             total_loss = loss_output['total_loss']
-
             # 梯度累积
             # 缩放后的损失值用于反向传播和梯度累积
             scaled_total_loss = total_loss / accumulation_steps
@@ -105,7 +116,6 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
                     loss_output['rgb_loss'].item(),
                     loss_output['eikonal_loss'].item(),
                     float(loss_output['depth_loss']),
-                    # loss_output['depth_loss'].item(),
                     loss_output['normal_l1'].item(),
                     loss_output['normal_cos'].item(),
                     loss_output['ray_mask_loss'].item(),
@@ -143,6 +153,7 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
         if e % config['other']['model_save_interval'] == 0:
             model.eval()
             eval_loss = 0
+            eval_sdf_loss = 0
             eval_loss_info = {
             }
             cfg.log_string("Switch Phase to Test")
@@ -194,8 +205,11 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
                         eval_loss_info[key] += torch.mean(loss_output[key]).item()
 
                 eval_loss += total_loss.item()
+                eval_sdf_loss += loss_output['sdf_loss'].item()
 
             avg_eval_loss = eval_loss / (batch_id + 1)
+            avg_sdf_loss = eval_sdf_loss / (batch_id + 1)
+
             for key in eval_loss_info:
                 eval_loss_info[key] = eval_loss_info[key] / (batch_id + 1)
             eval_loss_msg = f'avg_eval_loss is {avg_eval_loss}'
@@ -214,3 +228,9 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
                 min_eval_loss = avg_eval_loss
             else:
                 checkpoint.save("latest")
+
+            with open(trend_file_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([e, f"{avg_eval_loss:.6f}", f"{avg_sdf_loss:.6f}",
+                                f"{batchsize}", f"{current_lr}"])
+                cfg.log_string(f"Trend information saved to {trend_file_path}")

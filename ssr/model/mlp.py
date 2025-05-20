@@ -4,10 +4,6 @@ import numpy as np
 
 from .embed import get_embedder
 from ssr.ssr_utils.utils import repeat_interleave
-from FFC.PlugKDD import CorNetBlock
-from FFC.PlugEAA import EfficientAdditiveAttention
-from FFC.PlugKAN import KAN
-# from FFC.PlugMLLA import MLLABlock
 
 
 class ImplicitNetwork(nn.Module):
@@ -25,18 +21,16 @@ class ImplicitNetwork(nn.Module):
             weight_norm=True,
             multires=0,
             sphere_scale=1.0,
-            inside_outside=False
+            inside_outside=False,
     ):
         super().__init__()
 
         self.use_global_encoder = config['model']['latent_feature']['use_global_encoder']
         self.use_cls_encoder = config['model']['latent_feature']['use_cls_encoder']
-        self.use_sdf_encoder = config['pseudo_label']['train_protofile']
 
         self.sdf_bounding_sphere = sdf_bounding_sphere
         self.sphere_scale = sphere_scale
-        # dims = [d_in] + dims + [d_out + feature_vector_size]
-        dims = [d_in] + dims + [int(feature_vector_size/2)]
+        dims = [d_in] + dims + [d_out + feature_vector_size]
 
         self.embed_fn = None
         if multires > 0:
@@ -44,14 +38,11 @@ class ImplicitNetwork(nn.Module):
             self.embed_fn = embed_fn
 
             # use cat architecture
-            dims[0] = input_ch + 256                            # 39(x position encoder) + 256(pixel align feature)
+            dims[0] = input_ch + 256                                # 39(x position encoder) + 256(pixel align feature)
             if self.use_global_encoder:
                 dims[0] = dims[0] + 256                             # + 256(global img feature)
             if self.use_cls_encoder:
-                dims[0] = dims[0] + 9                               # + 9(cls feature).
-            if self.use_sdf_encoder:
-                dims[0] = dims[0] + 256
-                
+                dims[0] = dims[0] + 9                               # + 9(cls feature)
             skip_dim = skip_in[0]                                   # only one skip
             dims[skip_dim] = dims[0]
 
@@ -91,33 +82,23 @@ class ImplicitNetwork(nn.Module):
             setattr(self, "lin" + str(l), lin)
 
         self.softplus = nn.Softplus(beta=100)
-        # 选择设备 (GPU 如果可用，否则 CPU)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.decoder = KAN(
-            layers_hidden = [int(feature_vector_size/2),int(feature_vector_size/8),int(feature_vector_size/16),int(feature_vector_size/32),d_out],
-            grid_size=5,
-            spline_order=3,
-            scale_noise=0.1,
-            scale_base=1.0,
-            scale_spline=1.0
-        ).to(device)
-        self.device = device
 
-
-    def forward(self, input, latent_feature, cat_feature, sdf_latent):
+    def forward(self, input, latent_feature, cat_feature):
         if self.embed_fn is not None:
-            input = self.embed_fn(input)
+            input = self.embed_fn(input)                                    # [B*N_ray*N_sample, 39]
 
-        x = input
+        x = input                                                           # [B*N_ray*N_sample, 39]
+
         num_repeats = x.shape[0] // cat_feature.shape[0]
-        cat_feature = repeat_interleave(cat_feature, num_repeats)
-        sdf_repeats = x.shape[0] // sdf_latent.shape[0]
-        sdf_latent = repeat_interleave(sdf_latent, sdf_repeats)
-        now_sampler_points = x.shape[0] // latent_feature.shape[0]
-        latent_feature = repeat_interleave(latent_feature, now_sampler_points)
+        cat_feature = repeat_interleave(cat_feature, num_repeats)       # [B*N_ray*N_sample, c0]
 
-        x = torch.cat([x,cat_feature,latent_feature,sdf_latent], dim=1)
-        x = x.to(self.device)  # 确保输入数据在 GPU 上
+        x = torch.cat([x, cat_feature], dim=1)                          # [B*N_ray*N_sample, c0+39]
+
+
+        # unsqueeze latent_feature, original (SB * NS * B, latent_size)
+        now_sampler_points = x.shape[0] // latent_feature.shape[0]                  # sampler_points
+        latent_feature = repeat_interleave(latent_feature, now_sampler_points)      # (SB * NS * B * sampler_points, latent_size)
+
         for l in range(0, self.num_layers - 1):
             lin = getattr(self, "lin" + str(l))
 
@@ -126,27 +107,20 @@ class ImplicitNetwork(nn.Module):
                 x = x + skip_feature
 
             if l == 0:
-                # x = torch.cat([x, latent_feature], dim=1)
+                x = torch.cat([x, latent_feature], dim=1)
 
                 skip_feature = x
-            
-            if l == self.num_layers - 2:
-                feature = x
 
             x = lin(x)
 
             if l < self.num_layers - 2:
                 x = self.softplus(x)
-    
-        x = self.decoder(x)
 
-        x = torch.cat([x,feature],dim=1)
-        
         return x
 
-    def gradient(self, x, latent_feature, cat_feature, sdf_latent):
+    def gradient(self, x, latent_feature, cat_feature):
         x.requires_grad_(True)
-        y = self.forward(x, latent_feature, cat_feature, sdf_latent)[:,:1]
+        y = self.forward(x, latent_feature, cat_feature)[:,:1]
         d_output = torch.ones_like(y, requires_grad=False, device=y.device)
         gradients = torch.autograd.grad(
             outputs=y,
@@ -157,9 +131,9 @@ class ImplicitNetwork(nn.Module):
             only_inputs=True)[0]
         return gradients
 
-    def get_outputs(self, x, latent_feature, cat_feature, sdf_latent):
+    def get_outputs(self, x, latent_feature, cat_feature):
         x.requires_grad_(True)                      ###### get gradients
-        output = self.forward(x, latent_feature, cat_feature, sdf_latent)
+        output = self.forward(x, latent_feature, cat_feature)
         sdf = output[:,:1]
         ''' Clamping the SDF with the scene bounding sphere, so that all rays are eventually occluded '''
         if self.sdf_bounding_sphere > 0.0:
@@ -177,8 +151,8 @@ class ImplicitNetwork(nn.Module):
 
         return sdf, feature_vectors, gradients
 
-    def get_sdf_vals(self, x, latent_feature, cat_feature, sdf_latent):
-        sdf = self.forward(x, latent_feature, cat_feature, sdf_latent)[:,:1]
+    def get_sdf_vals(self, x, latent_feature, cat_feature):
+        sdf = self.forward(x, latent_feature, cat_feature)[:,:1]
         ''' Clamping the SDF with the scene bounding sphere, so that all rays are eventually occluded '''
         if self.sdf_bounding_sphere > 0.0:
             sphere_sdf = self.sphere_scale * (self.sdf_bounding_sphere - x.norm(2,1, keepdim=True))
@@ -262,30 +236,4 @@ class RenderingNetwork(nn.Module):
                 x = self.relu(x)
         
         x = self.sigmoid(x)
-        return x
-    
-
-class KANLayer(nn.Module):
-    def __init__(self, in_dim, out_dim, memory_dim, num_heads):
-        """
-        KAN Layer with memory-enhanced attention and MLP
-        Args:
-            in_dim (int): Input dimension.
-            out_dim (int): Output dimension.
-            memory_dim (int): Memory vector dimension.
-            num_heads (int): Number of attention heads.
-        """
-        super().__init__()
-        self.memory = nn.Parameter(torch.randn(memory_dim), requires_grad=True)
-        self.fc_memory = nn.Linear(memory_dim, in_dim)
-        self.attention = nn.MultiheadAttention(embed_dim=in_dim, num_heads=num_heads, batch_first=True)
-        self.fc_out = nn.Linear(in_dim, out_dim)
-        self.activation = nn.ELU()
-
-    def forward(self, x):
-        batch_size = x.size(0)
-        memory_state = self.fc_memory(self.memory).unsqueeze(0).expand(batch_size, -1, -1)
-        x = x.unsqueeze(1)  # Expand for sequence dimension
-        attn_output, _ = self.attention(x, x, x + memory_state)
-        x = self.activation(self.fc_out(attn_output.squeeze(1)))
         return x

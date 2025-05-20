@@ -10,8 +10,6 @@ from ssr.ssr_utils.utils import load_device, get_model, get_loss, \
     get_dataloader,CheckpointIO,get_trainer,get_optimizer,load_scheduler
 from ssr.ssr_utils.network_utils import fix_random_seed
 
-from collections import OrderedDict
-
 # for vscode debug error
 dirname = os.path.dirname(cv2.__file__)
 plugin_path = os.path.join(dirname, 'plugins', 'platforms')
@@ -33,7 +31,6 @@ def run(cfg):
     '''Load save path'''
     cfg.log_string('Data save path: %s' % (cfg.save_path))
     checkpoint=CheckpointIO(cfg)
-    tea_checkpoint = CheckpointIO(cfg)
 
     '''Load device'''
     cfg.log_string('Loading device settings.')
@@ -42,8 +39,6 @@ def run(cfg):
     '''Load data'''
     cfg.log_string('Loading dataset.')
     train_loader = get_dataloader(cfg.config, mode='train')
-    if cfg.config['Stage'] == 2:
-        unlabel_train_loader = get_dataloader(cfg.config, mode='train',unlabel=True)
     test_loader = get_dataloader(cfg.config, mode='val')
 
     '''Set loss'''
@@ -54,16 +49,6 @@ def run(cfg):
     cfg.log_string('Loading model.')
     net = get_model(cfg.config, device=device).float()
     checkpoint.register_modules(net=net)
-    
-
-    '''Load teacher_model'''
-    if cfg.config['Stage'] == 2:
-        cfg.log_string('Loading teacher model.')
-        tea_net = get_model(cfg.config, device=device).float()
-        tea_net = nn.DataParallel(tea_net)
-        tea_checkpoint.register_modules(net=tea_net)
-        tea_checkpoint.load(cfg.config["teacher_weight"])
-        tea_checkpoint.register_modules(net=tea_net)
 
     '''Load optimizer'''
     cfg.log_string('Loading optimizer.')
@@ -85,12 +70,8 @@ def run(cfg):
 
     '''Start to train'''
     cfg.log_string('Start to train.')
-    if cfg.config['Stage'] == 0:
-        trainer(cfg, net, loss, optimizer,scheduler,train_loader=train_loader, test_loader=test_loader,device=device,checkpoint=checkpoint)
-    elif cfg.config['Stage'] == 1:
-        trainer(cfg, net, loss, optimizer,scheduler,train_loader=train_loader, test_loader=test_loader,device=device,checkpoint=checkpoint)
-    elif cfg.config['Stage'] == 2:
-        trainer(cfg, net, tea_net, loss, optimizer,scheduler,train_loader=train_loader, unlabel_train_loader = unlabel_train_loader, test_loader=test_loader,device=device,checkpoint=checkpoint, tea_checkpoint = tea_checkpoint)
+    trainer(cfg, net, loss, optimizer,scheduler,train_loader=train_loader, test_loader=test_loader,device=device,checkpoint=checkpoint)
+
     cfg.log_string('Training finished.')
 
 if __name__=="__main__":
@@ -101,8 +82,6 @@ if __name__=="__main__":
     cfg.log_string('Loading configuration')
     cfg.log_string(cfg.config)
     cfg.write_config()
-    cfg.log_string('nvidia/MambaVision-B-1K, pretrained = true, depth-->Depthanything, resnte18 34 -->mamba')
 
     cfg.log_string('Training begin.')
-    
     run(cfg)
