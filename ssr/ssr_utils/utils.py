@@ -388,10 +388,10 @@ def get_dataloader(cfg,mode,pseudo=False):
 
 def get_trainer(config):
     if config["method"]=="ssr":
-        if config["Stage"] == 1:
-            from ssr.trainer import Recon_trainer
-        elif config["Stage"] == 2:
-            from ssr.trainer_stage2 import Recon_trainer
+        if config.get("Stage", 1) == 2:
+            from ssr.trainer_semi import Recon_trainer      # semi-supervised (teacher-student)
+        else:
+            from ssr.trainer import Recon_trainer           # supervised warm-up
         trainer=Recon_trainer
     else:
         raise NotImplementedError

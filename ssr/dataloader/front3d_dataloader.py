@@ -105,10 +105,10 @@ class Front3D_Recon_Dataset(Dataset):
         if self.use_diffu_prior:
             # img_name = imgid.split('/')[-1]
             file_name = os.path.splitext(os.path.basename(imgid))[0] + '_pred.npy'  # 生成完整的文件名
-            file_path = os.path.join(self.diffu_prior_path, file_name)  # 生成文件路径
-            if os.path.exists(file_path):       # 加载 .npy 文件
+            file_path = os.path.join(self.diffu_prior_path, file_name)
+            if os.path.exists(file_path):
                 np_data = np.load(file_path)
-                torch_data = torch.from_numpy(np_data).float() # 将 numpy 数组转换为 torch 张量
+                torch_data = torch.from_numpy(np_data).float()
                 self.diffu_prior = torch_data     # torch.Size([484, 648])
             else:
                 print(f"File {file_name} does not exist in the folder.")
@@ -429,7 +429,6 @@ def worker_init_fn(worker_id):
     np.random.seed(base_seed + worker_id)
 
 def Front3D_Recon_dataloader(config, mode='train', unlabel=False):
-    # 根据 unlabel 的值设置 batch_size
     if unlabel:
         batch_size = config['data']['batch_size']['unlabel']
     else:

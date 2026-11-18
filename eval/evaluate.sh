@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 config_path="$1"
 inference_cmd="python inference.py --config $config_path"
 evaluate_cmd="python eval/evaluate_front3d.py --config $config_path"

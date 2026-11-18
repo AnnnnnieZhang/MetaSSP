@@ -19,10 +19,9 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
     cfg.write_config()
     tb_logger = SummaryWriter(log_dir)
 
-    # 定义保存 trend_stage1.csv 的路径
+    # per-epoch evaluation trend
     trend_file_path = os.path.join(log_dir, 'trend_stage1.csv')
 
-    # 确保文件存在（如果不存在则创建） 写入标题行
     if not os.path.exists(trend_file_path):
         with open(trend_file_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -42,15 +41,15 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
     model.train()
 
     min_eval_loss = 10000
-    accumulation_steps = config["data"]["accumulation_steps"]  # 累积步数，尝试不同的值
-    batchsize = config["data"]["batch_size"]["train"]*config["data"]["accumulation_steps"]
+    accumulation_steps = config["data"].get("accumulation_steps", 1)   # gradient accumulation
+    batchsize = config["data"]["batch_size"]["train"] * accumulation_steps  # effective batch size
     lr = config["optimizer"]["lr"]
     
     for e in range(start_epoch, config['other']['nepoch']):
         torch.cuda.empty_cache()
         cfg.log_string("Switch Phase to Train")
         model.train()
-        optimizer.zero_grad()   # 重置优化器梯度
+        optimizer.zero_grad()
         for batch_id, (indices, model_input, ground_truth) in enumerate(train_loader):
         # for batch_id, (indices, model_input, ground_truth) in enumerate(itertools.islice(train_loader, min_len)):
 
@@ -83,8 +82,7 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
             
             loss_output = loss(model_outputs, ground_truth, e)
             total_loss = loss_output['total_loss']
-            # 梯度累积
-            # 缩放后的损失值用于反向传播和梯度累积
+            # gradient accumulation
             scaled_total_loss = total_loss / accumulation_steps
             scaled_total_loss.backward()    
             # total_loss.backward()
@@ -94,7 +92,7 @@ def Recon_trainer(cfg,model,loss,optimizer,scheduler,train_loader,test_loader,de
             if (batch_id + 1) % accumulation_steps == 0:
                 torch.nn.utils.clip_grad_norm_(parameters=model.parameters(), max_norm=0.7, norm_type=2)
                 
-                # 计算梯度范数
+                # gradient norm (for logging)
                 total_norm = 0
                 parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
                 for p in parameters:

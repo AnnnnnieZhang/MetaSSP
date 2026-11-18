@@ -440,7 +440,7 @@ def worker_init_fn(worker_id):
 
 
 def Pix3D_Recon_dataloader(config, mode='train', pseudo=False):
-    # 根据 unlabel 的值设置 batch_size
+    # the unlabeled loader has its own batch size
     if pseudo:
         batch_size = config['data']['batch_size']['pseudo']
     else:

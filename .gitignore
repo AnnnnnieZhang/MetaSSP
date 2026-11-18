@@ -129,15 +129,10 @@ dmypy.json
 .pyre/
 *.pyc
 
-# mycode
+# data, outputs and pretrained weights
 data/
 dataset/
 output/
-.vscode/
-
-# Ignore all files in the ssr/diffusion_depth_prior directory
-ssr/diffusion_depth_prior/*
-ssr/depth_anything/*
-ssr/depth_anything_pix3d/*
 pretrain_models/
-SSP3D/proto_features/
+.vscode/
+.DS_Store

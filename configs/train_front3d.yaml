@@ -1,6 +1,5 @@
 resume: False                           # if true resume training, start_epoch is the last epoch
 finetune: False                         # if true set start_epoch is 0
-dict_resume: False
 method: ssr                            # use the trainer
 exp_name: front3d_ckpt                   # experiment name
 save_root_path: ./output                # save path = os.path.join(save_root_path, exp_name)
@@ -8,15 +7,6 @@ weight: model_latest.pth
 show_rendering: False                    # NOTE: True for novel view synthesis
 fix_random_seed: True                   # fix random seed
 Stage: 1
-pseudo_label: 
-  threshold: 0.4
-  ema_alpha: 0.9998
-  discriminator_lr: 0.0008
-  lambda_adv: 0.00
-  step_length: 0.00005
-  ema_accu_num: 1
-  get_protofile: False
-  train_protofile: False
 
 eval:
   extract_mesh: True
@@ -41,7 +31,7 @@ data:
   test_class_name: 'evaluation_total'
   load_dynamic: True                    # True:load the data dynamically, False:store them in the memory firstly
   trial: False                          # only use 200 split
-  accumulation_steps: 8                 # 梯度累计iter 数
+  accumulation_steps: 8                 # gradient accumulation steps
   batch_size:
     train: 4
     val: 2

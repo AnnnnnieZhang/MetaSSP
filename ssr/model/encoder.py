@@ -184,17 +184,14 @@ class SpatialEncoder(nn.Module):
         self.latent_scaling[1] = self.latent.shape[-2]
         self.latent_scaling = self.latent_scaling / (self.latent_scaling - 1) * 2.0
         
-        # 按照 latent 标准差的比例来设定
+        # optional feature perturbation: Gaussian noise scaled by the latent std
         if f_dist:
-            # 先计算当前 batch latent 的标准差
             with torch.no_grad():
                 std = self.latent.std()
 
-            # 再把 noise_level 设为 std 的一个小比例
-            ratio = 0.05   # 你可以在 0.01 ～ 0.1 之间试试
+            ratio = 0.05   # noise level relative to the latent std
             noise_level = std * ratio
 
-            # 添加扰动
             noise = torch.randn_like(self.latent) * noise_level
             self.latent = self.latent + noise
 

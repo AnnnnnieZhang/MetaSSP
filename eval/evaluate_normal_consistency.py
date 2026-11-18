@@ -216,7 +216,7 @@ if __name__ == '__main__':
             if category in cal_dic and category in num_dic and num_dic[category] > 0:
                 f.write(f'{category}: {cal_dic[category]/num_dic[category]:.5f}\n')
             else:
-                f.write(f'{category}: No data available\n')  # 写入一个默认值或者提示信息
+                f.write(f'{category}: No data available\n')
 
         if number_total > 0:
             f.write(f'mean: {normals_correctness_total/number_total:.5f}\n')

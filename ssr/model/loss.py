@@ -197,17 +197,17 @@ class MonoSDFLoss(nn.Module):
         self.use_curriculum_depth = cfg['loss']['use_curriculum_depth']
         self.use_curriculum_normal = cfg['loss']['use_curriculum_normal']
         if self.use_curriculum_color:
-            if cfg['Stage'] == 2:
+            if cfg.get('Stage', 1) == 2:
                 self.curri_color = cfg['Stage2']['curri_color']
             else:
                 self.curri_color = cfg['loss']['curri_color']
         if self.use_curriculum_depth:
-            if cfg['Stage'] == 2:
+            if cfg.get('Stage', 1) == 2:
                 self.curri_depth = cfg['Stage2']['curri_depth']
             else:
                 self.curri_depth = cfg['loss']['curri_depth']
         if self.use_curriculum_normal:
-            if cfg['Stage'] == 2:
+            if cfg.get('Stage', 1) == 2:
                 self.curri_normal = cfg['Stage2']['curri_normal']
             else:
                 self.curri_normal = cfg['loss']['curri_normal']
@@ -317,16 +317,13 @@ class MonoSDFLoss(nn.Module):
             rgb_gt = ground_truth['rgb_values'].reshape(-1, self.num_pixels, 3)
         # # only supervised the foreground normal
         if self.vis_mask_loss:
-            # 获取前景可见性 mask
             if label:
-                vis_mask = ground_truth['vis_pixel'].cuda()  # 使用 ground_truth 提供的前景 mask
+                vis_mask = ground_truth['vis_pixel'].cuda()  # foreground mask from the ground truth
             else:
-                vis_mask = torch.ones(rgb_pred.shape[0], rgb_pred.shape[1], dtype=bool).cuda()  # 全图可见
+                vis_mask = torch.ones(rgb_pred.shape[0], rgb_pred.shape[1], dtype=bool).cuda()  # pseudo-labels: all pixels
         else:
             vis_mask = torch.ones(rgb_pred.shape[0], rgb_pred.shape[1], dtype=bool).cuda()              # [B, Num_pixels]
         vis_mask = vis_mask.reshape(-1, self.num_pixels, 1)                             # [B, Num_pixels, 1]
-
-        print()
 
         rgb_loss = self.get_rgb_loss(rgb_pred, rgb_gt, vis_mask)
         if self.use_curriculum_color:

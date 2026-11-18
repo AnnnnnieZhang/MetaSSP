@@ -1,5 +1,4 @@
-fvcore
-iopath
+# Install PyTorch / torchvision first, matching your CUDA version (see README).
 tensorboard
 scikit-image
 matplotlib
@@ -7,10 +6,10 @@ imageio
 plotly
 pandas
 opencv-python
-pyqt5
 pyyaml
 tqdm
 trimesh
+pyrender
 scipy
-setuptools==59.5.0
 joblib
+pillow
