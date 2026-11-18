@@ -15,7 +15,7 @@ Stage2:
 
   # meta-adaptive EMA (paper Sec. III-D)
   ema_alpha: 0.996                      # initial EMA momentum m_0
-  ema_min: 0.96                         # momentum clamp [m_min, m_max]
+  ema_min: 0.96                         # clamp of m_0 after each meta-controller rescaling
   ema_max: 0.9996
   eta: 0.06                             # strength of the parameter-importance regularisation
   importance_batches: 100               # unlabeled batches used per epoch to estimate importance (N)
@@ -29,7 +29,7 @@ Stage2:
   # SDF-aware pseudo-label weighting (paper Eq. 4-5)
   pseudo_alpha: 4.0                     # penalty on the augmentation-consistency loss
   pseudo_beta: 4.0                      # penalty on the SDF variance
-  pseudo_lambda: 0.2                    # maximum contribution of the pseudo-label loss
+  pseudo_lambda: 0.2                    # fixed weight on the pseudo-label loss; effective weight = pseudo_lambda * w_pseudo
 
   # curriculum of the colour / depth / normal losses in Stage 2 (overrides loss.curri_*)
   curri_color: [70, 150, 0, 0.1]        # [start_epoch, end_epoch, start_weight, end_weight]

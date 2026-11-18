@@ -8,35 +8,24 @@ from torch import nn
 
 
 def cosine_momentum(step, total_steps, initial_momentum):
-    """Cosine-annealed base momentum m_base (paper Eq. 7).
+    """Cosine-annealed base momentum (paper Eq. 7).
 
-    Starts at ``initial_momentum`` (m_0) and rises towards 1 as ``step``
-    approaches ``total_steps``.
+    Starts at ``initial_momentum`` and rises towards 1 as ``step`` approaches
+    ``total_steps``.
     """
     return 1 - (1 - initial_momentum) * (math.cos(math.pi * step / total_steps) + 1) / 2
 
 
-def adaptive_momentum(step, total_steps, initial_momentum, gamma=1.0,
-                      momentum_min=0.96, momentum_max=0.9996):
-    """Meta-adaptive EMA momentum (paper Eq. 9).
-
-        m = clip(gamma * m_base, m_min, m_max)
-
-    where ``m_base`` is the cosine-annealed momentum (Eq. 7) and ``gamma`` is the
-    output of the :class:`MomentumController` (Eq. 8).
-    """
-    m_base = cosine_momentum(step, total_steps, initial_momentum)
-    return float(max(min(gamma * m_base, momentum_max), momentum_min))
-
-
-def ema_update(teacher_model, student_model, momentum, importance_weights=None, eta=0.0):
+def ema_update(teacher_model, student_model, step, total_steps, initial_momentum,
+               importance_weights=None, eta=0.0):
     """Update the teacher from the student with an importance-regularised EMA.
 
-    Without ``importance_weights`` this is a standard EMA step (paper Eq. 6)
+    The momentum ``m`` is the cosine-annealed value of ``initial_momentum`` at ``step``
+    (paper Eq. 7). ``initial_momentum`` itself is rescaled once per evaluation by the
+    :class:`MomentumController` and clamped (see ``ssr/trainer_semi.py``).
 
-        theta_T <- m * theta_T + (1 - m) * theta_S
-
-    With them, each parameter moves by
+    Without ``importance_weights`` this is a standard EMA step (paper Eq. 6). With them,
+    each parameter moves by
 
         theta_T <- theta_T + (1 - m) / (1 + eta * omega) * (theta_S - theta_T)    (paper Eq. 10)
 
@@ -45,11 +34,14 @@ def ema_update(teacher_model, student_model, momentum, importance_weights=None, 
 
     Args:
         teacher_model, student_model: networks with identical state-dict keys.
-        momentum: EMA momentum m, e.g. from :func:`adaptive_momentum`.
+        step, total_steps: position in the cosine momentum schedule.
+        initial_momentum: m_0 of the schedule (after meta-controller rescaling).
         importance_weights: optional dict {parameter name: tensor} from
             ``metassp.importance.compute_importance_weights``.
         eta: strength of the importance regularisation (small positive value).
     """
+    momentum = cosine_momentum(step, total_steps, initial_momentum)
+
     teacher_state = teacher_model.state_dict()
     student_state = student_model.state_dict()
     new_teacher_state = OrderedDict()
