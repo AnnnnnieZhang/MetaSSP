@@ -18,7 +18,7 @@ import torch
 from torch.utils.tensorboard import SummaryWriter
 
 from utils.rend_util import get_psnr
-from metassp.ema import ema_update, MomentumController
+from metassp.ema import ema_update, adaptive_momentum, MomentumController
 from metassp.importance import compute_importance_weights
 from metassp.augmentation import batch_strong_augmentation, batch_weak_augmentation
 from metassp.pseudo_label import pseudo_label_weight, blend_losses
@@ -68,7 +68,7 @@ def Recon_trainer(cfg, model, tea_net, loss, optimizer, scheduler, train_loader,
     if not os.path.exists(trend_file_path):
         with open(trend_file_path, 'w', newline='') as f:
             csv.writer(f).writerow(["Epoch", "AvgEvalLoss", "AvgSDFLoss", "TeaAvgEvalLoss",
-                                    "TeaAvgSDFLoss", "ema_alpha", "ema_eta", "Stu->Tea"])
+                                    "TeaAvgSDFLoss", "ema_momentum", "gamma", "ema_eta", "Stu->Tea"])
     if not os.path.exists(weight_file_path):
         with open(weight_file_path, 'w', newline='') as f:
             csv.writer(f).writerow(["batch", "tea_loss", "sdf", "pseudo_W"])
@@ -97,7 +97,8 @@ def Recon_trainer(cfg, model, tea_net, loss, optimizer, scheduler, train_loader,
     total_steps = nepoch * min_len
 
     # EMA settings (paper Sec. III-D)
-    momentum = stage2['ema_alpha']                              # m_0, rescaled by the meta-controller
+    initial_momentum = stage2['ema_alpha']                      # m_0 of the cosine schedule (Eq. 7)
+    gamma = 1.0                                                 # meta-controller output (Eq. 8), updated every evaluation
     momentum_min = stage2.get('ema_min', 0.96)
     momentum_max = stage2.get('ema_max', 0.9996)
     eta = stage2['eta']
@@ -184,12 +185,11 @@ def Recon_trainer(cfg, model, tea_net, loss, optimizer, scheduler, train_loader,
                 parameters = [p for p in model.parameters() if p.grad is not None and p.requires_grad]
                 total_norm = sum(p.grad.detach().norm(2).item() ** 2 for p in parameters) ** 0.5
 
-                # Importance-regularised EMA update of the teacher (paper Eq. 10).
-                ema_update(tea_net, model,
-                           step=batch_id + e * min_len,
-                           total_steps=total_steps,
-                           initial_momentum=momentum,
-                           importance_weights=importance_weights, eta=eta)
+                # Meta-adaptive momentum (paper Eq. 7-9) and importance-regularised
+                # EMA update of the teacher (paper Eq. 10).
+                momentum = adaptive_momentum(batch_id + e * min_len, total_steps, initial_momentum,
+                                             gamma, momentum_min, momentum_max)
+                ema_update(tea_net, model, momentum, importance_weights=importance_weights, eta=eta)
 
                 optimizer.step()
                 optimizer.zero_grad()
@@ -322,13 +322,15 @@ def Recon_trainer(cfg, model, tea_net, loss, optimizer, scheduler, train_loader,
             cfg.log_string(f"Best teacher model updated: {best_folder}/model_best_teacher.pth")
         cfg.config['log']['path'] = log_dir
 
-        # Meta-controller rescales the EMA momentum (paper Eq. 8-9).
+        # Meta-controller: gamma from the teacher-student SDF loss gap, the teacher
+        # evaluation loss and the normalised epoch (paper Eq. 8).
         delta = torch.tensor(tea_avg_sdf_loss - avg_sdf_loss, device=device)
         t_eval = torch.tensor(tea_avg_eval_loss, device=device)
         epoch_norm = torch.tensor(e / nepoch, device=device)
         with torch.no_grad():
             gamma = controller(delta, t_eval, epoch_norm).item()
-        momentum = float(max(min(gamma * momentum, momentum_max), momentum_min))
+        momentum = adaptive_momentum((e + 1) * min_len, total_steps, initial_momentum,
+                                     gamma, momentum_min, momentum_max)
 
         # "Reset" update with a lower momentum when the student is no longer clearly
         # worse than the teacher, to shrink the teacher-student gap (paper Sec. III-D).
@@ -338,11 +340,10 @@ def Recon_trainer(cfg, model, tea_net, loss, optimizer, scheduler, train_loader,
             else:
                 need_reset = avg_sdf_loss - tea_avg_sdf_loss < reset_delta_sdf
             if need_reset:
-                ema_update(tea_net, model, step=e, total_steps=nepoch,
-                           initial_momentum=momentum * reset_scale)
+                ema_update(tea_net, model, momentum * reset_scale)
                 student_to_teacher = True
 
         with open(trend_file_path, 'a', newline='') as f:
             csv.writer(f).writerow([e, f"{avg_eval_loss:.6f}", f"{avg_sdf_loss:.6f}",
                                     f"{tea_avg_eval_loss:.6f}", f"{tea_avg_sdf_loss:.6f}",
-                                    f"{momentum:.6f}", eta, student_to_teacher])
+                                    f"{momentum:.6f}", f"{gamma:.6f}", eta, student_to_teacher])

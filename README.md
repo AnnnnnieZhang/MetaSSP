@@ -124,7 +124,7 @@ Outputs are written to `output/pix3d_semi/`:
 | `train_best/model_best_teacher.pth` | best teacher (the model used for evaluation) |
 | `train_best/model_best_student.pth` | best student |
 | `train_epoch_<e>/model_latest_{teacher,student}.pth` | checkpoints of epoch `e` |
-| `trend_stage2.csv` | per-epoch validation losses of student and teacher, EMA momentum, reset flag |
+| `trend_stage2.csv` | per-epoch validation losses of student and teacher, EMA momentum, γ, reset flag |
 | `weight_stage2.csv` | per-batch consistency loss, SDF variance and pseudo-label weight |
 | `log.txt`, TensorBoard events | full training log |
 
@@ -148,8 +148,8 @@ The semi-supervised hyper-parameters are in the `Stage2` block of `configs/pix3d
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `ema_alpha` | 0.996 | initial EMA momentum m₀ |
-| `ema_min`, `ema_max` | 0.96, 0.9996 | momentum clamp |
+| `ema_alpha` | 0.996 | initial EMA momentum m₀ of the cosine schedule |
+| `ema_min`, `ema_max` | 0.96, 0.9996 | clamp of the final momentum `m = clip(γ · m_base)` |
 | `eta` | 0.06 | strength of the importance regularisation η |
 | `importance_batches` | 100 | unlabeled batches per epoch used to estimate importance (N) |
 | `pseudo_alpha`, `pseudo_beta` | 4, 4 | penalties on consistency loss and SDF variance (α, β) |
